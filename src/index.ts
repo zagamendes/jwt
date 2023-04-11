@@ -1,72 +1,70 @@
-import express from "express";
-import dotenv from "dotenv";
-import userRouter from "./routers/usersRouter";
-import jwt from "jsonwebtoken";
-import cookieparser from "cookie-parser";
-import dayjs from "dayjs";
-import cors from "cors";
+import express from 'express';
+import dotenv from 'dotenv';
+import userRouter from './routers/usersRouter';
+import jwt from 'jsonwebtoken';
+import cookieparser from 'cookie-parser';
+
+import cors from 'cors';
+
 dotenv.config();
 const app = express();
 app.use(express.json());
 app.use(cookieparser());
-app.use(cors());
+app.use(
+  cors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+  })
+);
 const users = [
-  { name: "izaac", type: 1 },
-  { name: "jorge", type: 2 },
-  { name: "gabriel", type: 1 },
+  { name: 'izaac', type: 1 },
+  { name: 'jorge', type: 2 },
+  { name: 'gabriel', type: 1 },
 ];
-let refreshTokens = [];
 
-app.use("/users", userRouter);
+app.use('/users', userRouter);
 
-app.post("/login", (req, res) => {
+app.post('/login', (req, res) => {
   const { name } = req.body.data ?? req.body;
+  console.log('zzz', req.cookies);
 
   const user = users.filter((user) => user.name == name).shift();
 
-  const token = jwt.sign({ user }, process.env.TOKEN, { expiresIn: "10s" });
-  const refreshToken = jwt.sign({ user }, process.env.TOKEN);
-  const expiresIn = dayjs().add(45, "s");
-  refreshTokens.push({ token: refreshToken, expiresIn, user });
-  res.send({ token, refreshToken });
+  const token = jwt.sign({ user }, process.env.TOKEN, { expiresIn: '10s' });
+  const refreshToken = jwt.sign({ user }, process.env.TOKEN, {
+    expiresIn: '20s',
+  });
+
+  res
+    .cookie('accessToken', token)
+    .cookie('refreshToken', refreshToken, { httpOnly: true })
+    .send({
+      token,
+      refreshToken,
+    });
 });
 
-app.post("/refreshToken", (req, res) => {
-  const { refreshToken } = req.body;
+app.post('/refreshToken', async (req, res) => {
+  const refreshToken = req.headers.authorization.split(' ').pop();
+  let result: any;
+
   if (!refreshToken)
-    return res.status(401).send({ message: "token is missing" });
-  const refreshTokenFromDB = refreshTokens.filter(
-    (currentRefreshToken) => currentRefreshToken.token == refreshToken
-  );
-  if (refreshTokenFromDB.length == 0)
-    return res.status(403).send({ message: "invalid token" });
-  const [info] = refreshTokenFromDB;
-  const { user } = info;
-
-  const isExpired = dayjs().isAfter(info.expiresIn);
-
-  if (isExpired) {
-    refreshTokens = refreshTokens.filter(
-      (currentRefreshToken) => currentRefreshToken.token != refreshToken
-    );
-
-    const token = jwt.sign({ user }, process.env.TOKEN, { expiresIn: "10s" });
-
-    const newRefreshToken = jwt.sign({ user }, process.env.TOKEN);
-    const expiresIn = dayjs().add(1, "m");
-    refreshTokens.push({ token: newRefreshToken, expiresIn, user });
-    res
-      .cookie("token", token)
-      .cookie("refreshToken", newRefreshToken)
-      .send({ token, refreshToken });
-  } else {
-    jwt.verify(refreshToken, process.env.TOKEN, (err, result) => {
-      if (err) return res.status(403).send({ message: "invalid token" });
-
-      const user = result.user;
-      const token = jwt.sign({ user }, process.env.TOKEN, { expiresIn: "10s" });
-      res.cookie("token", token).send({ token });
+    return res.status(401).send({ message: 'token is missing' });
+  try {
+    result = await jwt.verify(refreshToken, process.env.TOKEN);
+    const accessToken = jwt.sign({ user: result.user }, process.env.TOKEN, {
+      expiresIn: '10s',
     });
+    const newRefreshToken = jwt.sign({ user: result.user }, process.env.TOKEN, {
+      expiresIn: '1m',
+    });
+
+    res
+      .cookie('accessToken', accessToken)
+
+      .send({ token: accessToken, refreshToken: newRefreshToken });
+  } catch (e) {
+    res.status(401).send('no Token');
   }
 });
 
